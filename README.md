@@ -2,7 +2,7 @@
 
 > 看清一个工程的结构 —— 每个功能的脉络，画成图。
 
-**状态：方案阶段，尚无代码。**
+**状态：P0 已实现**（doctor / check_index / 镜像 ETL / 四态 coverage；MCP server + CLI 二合一）。P1 `codemap map` 出图开发中。
 
 ## 这是什么
 
@@ -64,15 +64,28 @@ unresolved_refs   595,593     ← 未解析引用比已解析的边还多
 
 ## 完整方案
 
-→ [docs/CodeMap方案-v1.md](docs/CodeMap方案-v1.md)
+→ [docs/CodeMap方案-v2.md](docs/CodeMap方案-v2.md)
 
-13 节，含五层模型、边界缝合矩阵、依赖自举策略、功能切片算法、工具面定义、P0–P5 路线图、风险清单。
+15 节，含 v1→v2 修订记录、定稿的切片规则与 coverage 公式、镜像工件设计、工具 × 阶段矩阵、风险清单，以及针对 codegraph 1.2.0 源码的已核对事实清单。
 
 ## 现状与下一步
 
-当前仓库只有方案文档。路线图首个里程碑：
+P0 已落地（TypeScript + `node:sqlite`，零原生编译依赖）：
 
-- **P0** 依赖自举（doctor / setup）+ SQLite 只读通道 + schema 版本护栏
+```bash
+npm install
+npm run build && npm test        # 15 个单测（fixture 上游库 + ETL + coverage + projections）
+node dist/cli.js doctor .        # 依赖体检 + 覆盖评级
+node dist/cli.js mirror <path>   # 构建/重建镜像 .codemap/codemap.db
+node dist/cli.js mcp             # MCP stdio server（doctor / check_index / get 三个工具）
+```
+
+已实现：依赖四步探测（显式路径 → PATH → `npm prefix -g` shim → `npm ls -g`，禁 npx）、
+`codegraph status --json` 版本白名单校验、镜像 ETL（L0–L2 全量进 `.codemap/codemap.db`，
+daemon 死亡时 copy-aside 兜底）、四态 coverage 公式、handle/投影落库。
+
+下一个里程碑：
+
 - **P1** `codemap map` 出图 —— 这一步结束即有可交付价值
 
 ## 设计原则
