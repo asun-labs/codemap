@@ -8,6 +8,8 @@ import { buildMap, type MapFormat } from './core/map.js';
 import type { MapLevel } from './core/map-fold.js';
 import { computeUnknowns } from './core/unknowns.js';
 import { scanEdges } from './core/boundaries.js';
+import { pierceBoundary } from './core/pierce.js';
+import { tracePath } from './core/trace.js';
 import { codemapDir, removeOwnDbFiles, resolveProject } from './util/paths.js';
 
 const HELP = `codemap — 代码地图 v${VERSION}（P1）
@@ -24,7 +26,7 @@ const HELP = `codemap — 代码地图 v${VERSION}（P1）
   codemap mcp                      启动 MCP server（stdio）
   codemap help | --version
 
-P3+ 将提供: pierce / trace / features / describe_feature / impact
+P4+ 将提供: L4 适配器（路由/IPC/表）· features / describe_feature / impact · search / outline
 环境变量 CODEMAP_CODEGRAPH_PATH 可显式指定 codegraph 可执行文件。
 铁律：不静默安装 · 不代跑小时级索引 · 不写上游库。`;
 
@@ -167,6 +169,44 @@ async function main(): Promise<number> {
         return 2;
       }
       return 0;
+    }
+    case 'pierce': {
+      const projectPath = resolveProject(args.positional[0]);
+      const boundary = flagValue(args.flags, '--boundary') ?? args.positional[1];
+      if (!boundary) {
+        console.error('用法: codemap pierce <path> --boundary <boundary id 或路径>');
+        return 1;
+      }
+      try {
+        const r = await pierceBoundary(projectPath, boundary);
+        console.log(JSON.stringify(r, null, 2));
+        console.error(`[codemap] pierce=${r.status}${r.durationMs != null ? ` (${r.durationMs}ms)` : ''}`);
+        if (r.status === 'blocked') return 3;
+        return r.status === 'pierce-ok' || r.status === 'cached' ? 0 : 2;
+      } catch (e) {
+        console.error(`pierce 失败: ${e instanceof Error ? e.message : e}`);
+        return 2;
+      }
+    }
+    case 'trace': {
+      const projectPath = resolveProject(args.positional[0]);
+      const from = flagValue(args.flags, '--from') ?? args.positional[1];
+      const to = flagValue(args.flags, '--to') ?? args.positional[2];
+      if (!from || !to) {
+        console.error('用法: codemap trace <path> --from <符号> --to <符号>');
+        return 1;
+      }
+      try {
+        const r = tracePath(projectPath, from, to);
+        console.log(JSON.stringify(r, null, 2));
+        console.error(
+          `[codemap] ${r.found ? `${r.hops} 跳` : '不可达'}${r.undirected ? '（无向回退）' : ''}: ${r.path.map((p) => p.name).join(' → ')}`,
+        );
+        return r.found ? 0 : 2;
+      } catch (e) {
+        console.error(`trace 失败: ${e instanceof Error ? e.message : e}`);
+        return 2;
+      }
     }
     case 'clean': {
       const projectPath = resolveProject(args.positional[0]);

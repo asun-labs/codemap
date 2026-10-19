@@ -7,6 +7,8 @@ import { checkIndex } from '../core/check-index.js';
 import { buildMap } from '../core/map.js';
 import { computeUnknowns } from '../core/unknowns.js';
 import { scanEdges } from '../core/boundaries.js';
+import { pierceBoundary } from '../core/pierce.js';
+import { tracePath } from '../core/trace.js';
 import { resolveProject, ownDbExists } from '../util/paths.js';
 import { openOwnDb } from '../db/own.js';
 import { getProjection, pagePayload } from '../db/projections.js';
@@ -122,6 +124,35 @@ export async function startMcpServer(): Promise<void> {
       inputSchema: { path: z.string().optional().describe('工程路径，缺省为当前工作目录') },
     },
     ({ path }) => wrap(async () => scanEdges(resolveProject(path))),
+  );
+
+  server.registerTool(
+    'codemap_pierce',
+    {
+      title: 'CodeMap Pierce',
+      description:
+        '对单个边界（codemap_edges 给出的 boundary id）调 rea 穿透。rea 未安装时诚实返回 blocked + 安装指引，绝不静默安装；结果按内容哈希缓存',
+      inputSchema: {
+        path: z.string().optional().describe('工程路径，缺省为当前工作目录'),
+        boundary: z.string().describe('边界 id（boundary:<kind>:<path>）或路径'),
+      },
+    },
+    ({ path, boundary }) => wrap(async () => pierceBoundary(resolveProject(path), boundary)),
+  );
+
+  server.registerTool(
+    'codemap_trace',
+    {
+      title: 'CodeMap Trace',
+      description: '跨缝调用链：镜像图上有向最短路径（可选无向回退并注明），用于「从入口落到数据库/边界」的证据链',
+      inputSchema: {
+        path: z.string().optional().describe('工程路径，缺省为当前工作目录'),
+        from: z.string().describe('起点：节点 id 或唯一符号名'),
+        to: z.string().describe('终点：节点 id 或唯一符号名'),
+        undirected: z.boolean().optional().describe('允许无向回退，默认允许'),
+      },
+    },
+    ({ path, from, to, undirected }) => wrap(async () => tracePath(resolveProject(path), from, to, { undirected })),
   );
 
   server.registerTool(
