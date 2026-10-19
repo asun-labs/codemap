@@ -3,6 +3,7 @@ import { deliverPayload, type PayloadDelivery } from '../db/projections.js';
 import { loadGraph } from './graph-load.js';
 import { foldGraph, type MapLevel } from './map-fold.js';
 import { renderDot, renderJson, renderMermaid } from './map-render.js';
+import { buildL4Index } from './adapters.js';
 
 export type MapFormat = 'mermaid' | 'dot' | 'json';
 
@@ -13,6 +14,8 @@ export interface MapParams {
   depth?: number;
   format?: MapFormat;
   scope?: string;
+  /** 并入 L4 适配器节点（路由/IPC/桥/表），按 file:line 挂到所属单元 */
+  includeL4?: boolean;
 }
 
 export interface MapResult {
@@ -43,7 +46,28 @@ export function buildMap(projectPath: string, params: MapParams = {}): MapResult
   const db = openOwnDb(projectPath);
   try {
     const g = loadGraph(db);
+    const extraNotes: string[] = [];
+    if (params.includeL4) {
+      const l4 = buildL4Index(projectPath, g);
+      for (const n of l4.nodes) {
+        g.nodes.set(n.id, {
+          id: n.id,
+          kind: n.kind,
+          name: n.label,
+          qualifiedName: null,
+          filePath: n.filePath,
+          language: null,
+          startLine: n.line,
+          endLine: n.line,
+        });
+      }
+      for (const e of l4.edges) g.edges.push({ source: e.source, target: e.target, kind: e.kind });
+      if (l4.nodes.length > 0) extraNotes.push(`L4 并入 ${l4.nodes.length} 节点`);
+      const undetected = l4.adapters.filter((a) => !a.detected).map((a) => a.name);
+      if (undetected.length > 0) extraNotes.push(`适配器未检出: ${undetected.join('/')}`);
+    }
     const folded = foldGraph(g, { level, maxNodes, scopePath, focus: params.focus, depth: params.depth });
+    folded.notes.push(...extraNotes);
     if (folded.nodes.length === 0) {
       throw new Error(`map 无内容: ${folded.notes.join('; ') || '范围内没有节点'}`);
     }

@@ -10,24 +10,30 @@ import { computeUnknowns } from './core/unknowns.js';
 import { scanEdges } from './core/boundaries.js';
 import { pierceBoundary } from './core/pierce.js';
 import { tracePath } from './core/trace.js';
+import { buildL4Index } from './core/adapters.js';
 import { codemapDir, removeOwnDbFiles, resolveProject } from './util/paths.js';
 
-const HELP = `codemap — 代码地图 v${VERSION}（P1）
+const HELP = `codemap — 代码地图 v${VERSION}（P4）
 
   codemap doctor [path] [--json]   依赖体检 + 覆盖评级
   codemap check [path] [--json]    索引与镜像状态（只检查不代跑）
   codemap mirror [path]            构建/重建镜像 .codemap/codemap.db
   codemap map [path]               出图（--level system|module|symbol --focus X --depth N
                                    --format mermaid|dot|json --max-nodes N
-                                   --scope project|module:<路径> -o <file>）
+                                   --scope project|module:<路径> --include-l4 -o <file>）
   codemap unknowns [path]          盲区清单（unresolved_refs 聚合，--scope 可选）
   codemap edges [path]             外部边界清单（native/wasm/asar + HTTP 出口 + env + DB）
+  codemap pierce <path> --boundary <id|路径>
+                                   对单个边界调 rea 穿透（rea 未装则诚实返回指引）
+  codemap trace <path> --from <符号> --to <符号>
+                                   跨缝调用链最短路径
+  codemap l4 [path]                L4 适配器清单（路由/IPC/桥/表）
   codemap clean [path]             清除镜像
   codemap mcp                      启动 MCP server（stdio）
   codemap help | --version
 
-P4+ 将提供: L4 适配器（路由/IPC/表）· features / describe_feature / impact · search / outline
-环境变量 CODEMAP_CODEGRAPH_PATH 可显式指定 codegraph 可执行文件。
+P5 将提供: features / describe_feature / impact / search / outline
+环境变量 CODEMAP_CODEGRAPH_PATH / CODEMAP_REA_PATH 可显式指定可执行文件。
 铁律：不静默安装 · 不代跑小时级索引 · 不写上游库。`;
 
 interface Args {
@@ -207,6 +213,18 @@ async function main(): Promise<number> {
         console.error(`trace 失败: ${e instanceof Error ? e.message : e}`);
         return 2;
       }
+    }
+    case 'l4': {
+      const projectPath = resolveProject(args.positional[0]);
+      try {
+        const r = buildL4Index(projectPath);
+        console.log(JSON.stringify(r, null, 2));
+        console.error(`[codemap] L4 节点 ${r.nodes.length} 个 · 检出: ${r.adapters.filter((a) => a.detected).map((a) => a.name).join('/') || '无'}`);
+      } catch (e) {
+        console.error(`l4 失败: ${e instanceof Error ? e.message : e}`);
+        return 2;
+      }
+      return 0;
     }
     case 'clean': {
       const projectPath = resolveProject(args.positional[0]);

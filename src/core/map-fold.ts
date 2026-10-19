@@ -33,6 +33,9 @@ export const SYMBOL_KINDS = new Set([
   'variable', 'constant', 'component', 'struct',
 ]);
 
+/** L4 适配器节点种类（v2 §6.2）——map 符号级与 L4 一起参与 */
+export const L4_KINDS = new Set(['route', 'ipc', 'bridge', 'table']);
+
 const MAX_DIR_DEPTH = 8;
 const ROOT_KEY = '(root)';
 
@@ -112,7 +115,7 @@ export function foldGraph(g: LoadedGraph, opts: FoldOptions): FoldedMap {
     const set = new Set<string>();
     for (const n of participating.values()) {
       if (mode.kind === 'symbol') {
-        if (SYMBOL_KINDS.has(n.kind)) set.add(n.id);
+        if (SYMBOL_KINDS.has(n.kind) || L4_KINDS.has(n.kind)) set.add(n.id);
       } else {
         set.add(mode.kind === 'file' ? toPosix(n.filePath as string) : dirAtDepth(n.filePath as string, mode.depth));
       }
@@ -160,7 +163,7 @@ export function foldGraph(g: LoadedGraph, opts: FoldOptions): FoldedMap {
     let key: string;
     let parent: string | null = null;
     if (mode.kind === 'symbol') {
-      if (!SYMBOL_KINDS.has(n.kind)) continue;
+      if (!SYMBOL_KINDS.has(n.kind) && !L4_KINDS.has(n.kind)) continue;
       key = n.id;
     } else if (mode.kind === 'file') {
       key = toPosix(n.filePath as string);

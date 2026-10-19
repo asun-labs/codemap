@@ -79,6 +79,8 @@ export interface FixtureOpts {
   extraction?: number;
   /** 追加 node_modules 内的节点与出边（验证 map 的 node_modules 排除） */
   extras?: boolean;
+  /** 追加 express/electron/prisma 适配器场景（盘上文件 + 可缝合符号） */
+  adapters?: boolean;
 }
 
 export function createFixtureProject(opts: FixtureOpts = {}): string {
@@ -156,6 +158,34 @@ export function createFixtureProject(opts: FixtureOpts = {}): string {
     fs.mkdirSync(path.join(dir, 'lib'), { recursive: true });
     fs.writeFileSync(path.join(dir, 'lib', 'libvendor.dll'), '');
     fs.writeFileSync(path.join(dir, 'pkg.wasm'), '');
+  }
+
+  if (opts.adapters) {
+    fs.writeFileSync(
+      path.join(dir, 'package.json'),
+      JSON.stringify({ name: 'fixture-app', dependencies: { express: '^4.0.0', electron: '^20.0.0' }, devDependencies: { prisma: '^4.0.0' } }),
+    );
+    fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'src', 'server.ts'),
+      "app.get('/api/users', getUsers);\napp.post('/api/users', createUser);\napp.delete('/api/users/:id', deleteUser);\n",
+    );
+    fs.writeFileSync(
+      path.join(dir, 'src', 'ipc.ts'),
+      "ipcMain.handle('settings:save', onSave);\ncontextBridge.exposeInMainWorld('settings', settingsApi);\n",
+    );
+    fs.mkdirSync(path.join(dir, 'prisma'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'prisma', 'schema.prisma'), 'model User {\n  id Int @id\n}\n\nmodel Post {\n  id Int @id\n}\n');
+    // 可缝合符号：getUsers 覆盖 server.ts 1-2 行
+    db.prepare(
+      'INSERT INTO nodes(id, kind, name, qualified_name, file_path, language, start_line, end_line, updated_at) VALUES (?,?,?,?,?,?,?,?,?)',
+    ).run('n:getUsers', 'function', 'getUsers', 'getUsers', 'src/server.ts', 'typescript', 1, 2, now);
+    db.prepare(
+      'INSERT INTO files(path, content_hash, language, size, modified_at, indexed_at) VALUES (?,?,?,?,?,?)',
+    ).run('src/server.ts', 'hashsrv', 'typescript', 200, now, now);
+    db.prepare(
+      'INSERT INTO files(path, content_hash, language, size, modified_at, indexed_at) VALUES (?,?,?,?,?,?)',
+    ).run('src/ipc.ts', 'hashipc', 'typescript', 120, now, now);
   }
 
   db.close();

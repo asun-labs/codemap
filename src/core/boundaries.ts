@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { walkFiles, toRelPath, type WalkStats } from './file-walk.js';
 
 export type BoundaryKind = 'native' | 'wasm' | 'asar' | 'prebuilt';
 
@@ -40,9 +41,6 @@ const BOUNDARY_EXT: Record<string, { kind: BoundaryKind; pierceable: boolean; re
 };
 
 const SOURCE_EXT = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
-const SKIP_DIRS = new Set(['.git', '.codemap', '.codegraph', '.svn', 'dist', 'out', 'build', '.next']);
-const WALK_CAP = 30_000;
-const SOURCE_READ_CAP = 3_000;
 const MAX_SOURCE_BYTES = 512 * 1024;
 
 const HTTP_PATTERNS: RegExp[] = [
@@ -63,15 +61,12 @@ export function scanEdges(projectPath: string): EdgeScanResult {
   const notes: string[] = [];
   const boundaries = new Map<string, BoundaryHit>();
   const sourceFiles: string[] = [];
-  let walked = 0;
-  let truncated = false;
 
-  walk(projectPath, (fp) => {
-    walked++;
+  const walkStats: WalkStats = walkFiles(projectPath, (fp) => {
     const ext = path.extname(fp).toLowerCase();
     const hit = BOUNDARY_EXT[ext];
     if (hit) {
-      const rel = toRel(projectPath, fp);
+      const rel = toRelPath(projectPath, fp);
       let size: number | null = null;
       try {
         size = fs.statSync(fp).size;
@@ -90,16 +85,13 @@ export function scanEdges(projectPath: string): EdgeScanResult {
     } else if (SOURCE_EXT.has(ext)) {
       sourceFiles.push(fp);
     }
-  }, (dir) => {
-    if (SKIP_DIRS.has(dir) && dir !== 'dist' && dir !== 'out' && dir !== 'build') return true;
-    return false;
   });
-  if (walked >= WALK_CAP) {
-    truncated = true;
-    notes.push(`文件遍历达上限 ${WALK_CAP}，扫描可能不完整`);
+  if (walkStats.truncated) {
+    notes.push(`文件遍历达上限 ${walkStats.files}，扫描可能不完整`);
   }
 
   // 源码扫描：HTTP 出口 / env / 边界引用证据（cap 保护大仓库）
+  const SOURCE_READ_CAP = 3_000;
   const srcList = sourceFiles.slice(0, SOURCE_READ_CAP);
   if (sourceFiles.length > SOURCE_READ_CAP) {
     notes.push(`源码扫描抽样 ${SOURCE_READ_CAP}/${sourceFiles.length} 个文件`);
@@ -123,7 +115,7 @@ export function scanEdges(projectPath: string): EdgeScanResult {
     } catch {
       continue;
     }
-    const rel = toRel(projectPath, fp);
+    const rel = toRelPath(projectPath, fp);
     const lines = text.split(/\r?\n/);
 
     // 边界引用证据：字符串字面量里出现边界文件 basename
@@ -184,36 +176,8 @@ export function scanEdges(projectPath: string): EdgeScanResult {
       .sort((a, b) => a.name.localeCompare(b.name))
       .slice(0, 100),
     databases,
-    scanned: { sourceFiles: srcList.length, walkedFiles: walked, truncated, notes },
+    scanned: { sourceFiles: srcList.length, walkedFiles: walkStats.files, truncated: walkStats.truncated, notes },
   };
-}
-
-function walk(root: string, onFile: (fp: string) => void, skipDir: (name: string) => boolean): void {
-  const stack: string[] = [root];
-  let visited = 0;
-  while (stack.length > 0) {
-    const dir = stack.pop() as string;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const e of entries) {
-      if (++visited > WALK_CAP) return;
-      const fp = path.join(dir, e.name);
-      if (e.isDirectory()) {
-        if (!skipDir(e.name)) stack.push(fp);
-      } else if (e.isFile()) {
-        onFile(fp);
-      }
-    }
-  }
-}
-
-function toRel(root: string, fp: string): string {
-  const rel = path.relative(root, fp).replace(/\\/g, '/');
-  return rel.startsWith('..') ? fp.replace(/\\/g, '/') : rel;
 }
 
 function findUpwards(root: string, relParts: string[]): string | null {
