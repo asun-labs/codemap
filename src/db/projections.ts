@@ -53,3 +53,22 @@ export function pagePayload(
   const next = start + chunk.length;
   return { chunk, offset: start, nextOffset: next < total ? next : null, total };
 }
+
+export interface PayloadDelivery {
+  /** true = payload 为全文；false = payload 为预览片段，全文按 handle 取 */
+  inline: boolean;
+  payload: string;
+  handle?: string;
+  total: number;
+  summary?: string;
+}
+
+/** 投影投递（v2 §7 响应预算）：短则内联全文，长则落库 + handle + 预览 */
+export function deliverPayload(db: DatabaseSync, payload: string, summary?: string): PayloadDelivery {
+  const total = payload.length;
+  if (total <= PROJECTION_PAGE_CHARS) {
+    return { inline: true, payload, total, summary };
+  }
+  const handle = putProjection(db, payload);
+  return { inline: false, payload: payload.slice(0, 2_000), handle, total, summary };
+}

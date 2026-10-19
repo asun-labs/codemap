@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { VERSION } from '../version.js';
 import { runDoctor } from '../core/doctor.js';
 import { checkIndex } from '../core/check-index.js';
+import { buildMap } from '../core/map.js';
 import { resolveProject, ownDbExists } from '../util/paths.js';
 import { openOwnDb } from '../db/own.js';
 import { getProjection, pagePayload } from '../db/projections.js';
@@ -39,8 +40,9 @@ export async function startMcpServer(): Promise<void> {
     { name: 'codemap', version: VERSION },
     {
       instructions:
-        'CodeMap 代码地图（P0）：codemap_doctor 依赖体检、codemap_check_index 索引/镜像状态、' +
-        'codemap_get 按 handle 取回完整投影。图与功能切片工具（map/features/edges/unknowns…）随 P1+ 提供。' +
+        'CodeMap 代码地图（P1）：codemap_doctor 依赖体检、codemap_check_index 索引/镜像状态、' +
+        'codemap_map 出图（自适应折叠，mermaid/dot/json）、codemap_get 按 handle 取回完整投影。' +
+        '功能切片与边界工具（features/edges/unknowns…）随 P2+ 提供。' +
         'CodeMap 绝不静默安装、绝不代跑小时级索引、绝不写上游库。',
     },
   );
@@ -65,6 +67,26 @@ export async function startMcpServer(): Promise<void> {
       inputSchema: { path: z.string().optional().describe('工程路径，缺省为当前工作目录') },
     },
     ({ path }) => wrap(async () => checkIndex(path)),
+  );
+
+  server.registerTool(
+    'codemap_map',
+    {
+      title: 'CodeMap Map',
+      description:
+        '代码地图出图：自适应聚合折叠（system/module/symbol 三级粒度，maxNodes 兜底），' +
+        '支持 focus+N 跳展开与 module:<路径> 范围，输出 mermaid / dot / codemap-graph json',
+      inputSchema: {
+        path: z.string().optional().describe('工程路径，缺省为当前工作目录'),
+        level: z.enum(['system', 'module', 'symbol']).optional().describe('聚合粒度，默认 system'),
+        maxNodes: z.number().int().min(1).max(500).optional().describe('节点预算，默认 60'),
+        focus: z.string().optional().describe('以某单元为中心'),
+        depth: z.number().int().min(1).max(10).optional().describe('focus 展开跳数，默认 3'),
+        format: z.enum(['mermaid', 'dot', 'json']).optional().describe('输出格式，默认 mermaid'),
+        scope: z.string().optional().describe('project | module:<路径>'),
+      },
+    },
+    ({ path, ...params }) => wrap(async () => buildMap(resolveProject(path), params)),
   );
 
   server.registerTool(

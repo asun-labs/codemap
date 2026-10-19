@@ -4,31 +4,57 @@ import { VERSION } from './version.js';
 import { runDoctor, renderDoctorText } from './core/doctor.js';
 import { checkIndex, renderCheckText } from './core/check-index.js';
 import { buildMirror, MirrorError } from './db/mirror.js';
+import { buildMap, type MapFormat } from './core/map.js';
+import type { MapLevel } from './core/map-fold.js';
 import { codemapDir, removeOwnDbFiles, resolveProject } from './util/paths.js';
 
-const HELP = `codemap — 代码地图 v${VERSION}（P0）
+const HELP = `codemap — 代码地图 v${VERSION}（P1）
 
   codemap doctor [path] [--json]   依赖体检 + 覆盖评级
   codemap check [path] [--json]    索引与镜像状态（只检查不代跑）
   codemap mirror [path]            构建/重建镜像 .codemap/codemap.db
+  codemap map [path]               出图（--level system|module|symbol --focus X --depth N
+                                   --format mermaid|dot|json --max-nodes N
+                                   --scope project|module:<路径> -o <file>）
   codemap clean [path]             清除镜像
   codemap mcp                      启动 MCP server（stdio）
   codemap help | --version
 
-P1+ 将提供: map / features / edges / unknowns / pierce / trace / impact
+P2+ 将提供: unknowns / edges / pierce / trace / features / impact
 环境变量 CODEMAP_CODEGRAPH_PATH 可显式指定 codegraph 可执行文件。
 铁律：不静默安装 · 不代跑小时级索引 · 不写上游库。`;
 
 interface Args {
   positional: string[];
+  flags: string[];
   json: boolean;
 }
 
+/** flag 后若紧跟非 flag 词元，视为该 flag 的值 */
 function parseArgs(rest: string[]): Args {
-  return {
-    positional: rest.filter((a) => !a.startsWith('--')),
-    json: rest.includes('--json'),
-  };
+  const positional: string[] = [];
+  const flags: string[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    const tok = rest[i] as string;
+    if (tok.startsWith('--')) {
+      flags.push(tok);
+      const next = rest[i + 1];
+      if (next !== undefined && !next.startsWith('--')) {
+        flags.push(next);
+        i++;
+      }
+    } else {
+      positional.push(tok);
+    }
+  }
+  return { positional, flags, json: flags.includes('--json') };
+}
+
+function flagValue(flags: string[], name: string): string | undefined {
+  const i = flags.indexOf(name);
+  if (i < 0 || i + 1 >= flags.length) return undefined;
+  const v = flags[i + 1];
+  return v !== undefined && !v.startsWith('--') ? v : undefined;
 }
 
 async function main(): Promise<number> {
@@ -77,6 +103,35 @@ async function main(): Promise<number> {
         }
         throw e;
       }
+    }
+    case 'map': {
+      const projectPath = resolveProject(args.positional[0]);
+      try {
+        const r = buildMap(projectPath, {
+          level: flagValue(args.flags, '--level') as MapLevel | undefined,
+          maxNodes: Number(flagValue(args.flags, '--max-nodes') ?? '') || undefined,
+          focus: flagValue(args.flags, '--focus'),
+          depth: Number(flagValue(args.flags, '--depth') ?? '') || undefined,
+          format: flagValue(args.flags, '--format') as MapFormat | undefined,
+          scope: flagValue(args.flags, '--scope'),
+        });
+        const outFile = flagValue(args.flags, '-o');
+        if (outFile) {
+          fs.writeFileSync(outFile, r.delivery.inline ? r.delivery.payload : r.delivery.payload);
+          console.error(`已写出 ${outFile}（${r.summary}）`);
+          if (!r.delivery.inline) console.error(`注意：全文 ${r.delivery.total} 字符超预算，此文件为预览片段`);
+        } else {
+          console.log(r.delivery.inline ? r.delivery.payload : r.delivery.payload);
+          if (!r.delivery.inline) {
+            console.error(`[codemap] 全文 ${r.delivery.total} 字符，已存投影 handle=${r.delivery.handle}，用 codemap get 取回`);
+          }
+          console.error(`[codemap] ${r.summary}`);
+        }
+      } catch (e) {
+        console.error(`map 失败: ${e instanceof Error ? e.message : e}`);
+        return 2;
+      }
+      return 0;
     }
     case 'clean': {
       const projectPath = resolveProject(args.positional[0]);

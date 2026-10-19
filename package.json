@@ -17,7 +17,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/mirror.test.ts tests/coverage.test.ts tests/projections.test.ts",
+    "test": "tsx --test tests/mirror.test.ts tests/coverage.test.ts tests/projections.test.ts tests/map.test.ts",
     "smoke": "node dist/cli.js doctor ."
   },
   "dependencies": {

@@ -77,6 +77,8 @@ CREATE TABLE IF NOT EXISTS project_metadata (
 
 export interface FixtureOpts {
   extraction?: number;
+  /** 追加 node_modules 内的节点与出边（验证 map 的 node_modules 排除） */
+  extras?: boolean;
 }
 
 export function createFixtureProject(opts: FixtureOpts = {}): string {
@@ -132,6 +134,16 @@ export function createFixtureProject(opts: FixtureOpts = {}): string {
     String(opts.extraction ?? 24),
     now,
   );
+
+  if (opts.extras) {
+    db.prepare(
+      'INSERT INTO files(path, content_hash, language, size, modified_at, indexed_at) VALUES (?,?,?,?,?,?)',
+    ).run('node_modules/pkg/index.ts', 'hashnm', 'javascript', 10, now, now);
+    db.prepare(
+      'INSERT INTO nodes(id, kind, name, qualified_name, file_path, language, start_line, end_line, updated_at) VALUES (?,?,?,?,?,?,?,?,?)',
+    ).run('n:nm', 'function', 'nmfn', 'nmfn', 'node_modules/pkg/index.ts', 'javascript', 1, 5, now);
+    db.prepare('INSERT INTO edges(source, target, kind, line, col) VALUES (?,?,?,?,?)').run('n:main', 'n:nm', 'calls', 2, 1);
+  }
 
   db.close();
   return dir;
