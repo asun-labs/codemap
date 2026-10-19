@@ -11,9 +11,12 @@ import { scanEdges } from './core/boundaries.js';
 import { pierceBoundary } from './core/pierce.js';
 import { tracePath } from './core/trace.js';
 import { buildL4Index } from './core/adapters.js';
+import { buildFeatures, describeFeature } from './core/features.js';
+import { impactAnalysis } from './core/impact.js';
+import { searchNodes, outlineNode } from './core/search.js';
 import { codemapDir, removeOwnDbFiles, resolveProject } from './util/paths.js';
 
-const HELP = `codemap — 代码地图 v${VERSION}（P4）
+const HELP = `codemap — 代码地图 v${VERSION}（P5 全量）
 
   codemap doctor [path] [--json]   依赖体检 + 覆盖评级
   codemap check [path] [--json]    索引与镜像状态（只检查不代跑）
@@ -28,11 +31,17 @@ const HELP = `codemap — 代码地图 v${VERSION}（P4）
   codemap trace <path> --from <符号> --to <符号>
                                    跨缝调用链最短路径
   codemap l4 [path]                L4 适配器清单（路由/IPC/桥/表）
+  codemap features [path]          功能切片清单（--depth N --max-nodes N）
+  codemap feature <path> --name <名>
+                                   单个功能切片完整卡
+  codemap impact <path> --symbol <符号> [--depth N]
+                                   影响面 + L4 入口放大
+  codemap search <path> <关键词>   镜像符号检索
+  codemap outline <path> <节点>    符号大纲（contains 层级）
   codemap clean [path]             清除镜像
-  codemap mcp                      启动 MCP server（stdio）
+  codemap mcp                      启动 MCP server（stdio，13 个工具）
   codemap help | --version
 
-P5 将提供: features / describe_feature / impact / search / outline
 环境变量 CODEMAP_CODEGRAPH_PATH / CODEMAP_REA_PATH 可显式指定可执行文件。
 铁律：不静默安装 · 不代跑小时级索引 · 不写上游库。`;
 
@@ -222,6 +231,90 @@ async function main(): Promise<number> {
         console.error(`[codemap] L4 节点 ${r.nodes.length} 个 · 检出: ${r.adapters.filter((a) => a.detected).map((a) => a.name).join('/') || '无'}`);
       } catch (e) {
         console.error(`l4 失败: ${e instanceof Error ? e.message : e}`);
+        return 2;
+      }
+      return 0;
+    }
+    case 'features': {
+      const projectPath = resolveProject(args.positional[0]);
+      try {
+        const r = buildFeatures(projectPath, {
+          maxDepth: Number(flagValue(args.flags, '--depth') ?? '') || undefined,
+          maxFeatureNodes: Number(flagValue(args.flags, '--max-nodes') ?? '') || undefined,
+        });
+        console.log(JSON.stringify(r, null, 2));
+        console.error(
+          `[codemap] 入口 ${r.entriesConsidered} 个 → 功能 ${r.features.length} 片 · shared ${r.shared.length} · giantSeeds ${r.giantSeeds.length}`,
+        );
+      } catch (e) {
+        console.error(`features 失败: ${e instanceof Error ? e.message : e}`);
+        return 2;
+      }
+      return 0;
+    }
+    case 'feature': {
+      const projectPath = resolveProject(args.positional[0]);
+      const name = flagValue(args.flags, '--name') ?? args.positional[1];
+      if (!name) {
+        console.error('用法: codemap feature <path> --name <功能名>');
+        return 1;
+      }
+      try {
+        const r = describeFeature(projectPath, name);
+        console.log(JSON.stringify(r, null, 2));
+      } catch (e) {
+        console.error(`feature 失败: ${e instanceof Error ? e.message : e}`);
+        return 2;
+      }
+      return 0;
+    }
+    case 'impact': {
+      const projectPath = resolveProject(args.positional[0]);
+      const symbol = flagValue(args.flags, '--symbol') ?? args.positional[1];
+      if (!symbol) {
+        console.error('用法: codemap impact <path> --symbol <符号>');
+        return 1;
+      }
+      try {
+        const r = impactAnalysis(projectPath, symbol, { depth: Number(flagValue(args.flags, '--depth') ?? '') || undefined });
+        console.log(JSON.stringify(r, null, 2));
+        console.error(
+          `[codemap] 影响 ${r.impacted.length} 个节点 · 入口放大 ${r.entryHits.length} 个${r.truncated ? '（深度截断）' : ''}`,
+        );
+        return 0;
+      } catch (e) {
+        console.error(`impact 失败: ${e instanceof Error ? e.message : e}`);
+        return 2;
+      }
+    }
+    case 'search': {
+      const projectPath = resolveProject(args.positional[0]);
+      const q = flagValue(args.flags, '--q') ?? args.positional[1];
+      if (!q) {
+        console.error('用法: codemap search <path> <关键词>');
+        return 1;
+      }
+      try {
+        const hits = searchNodes(projectPath, q, Number(flagValue(args.flags, '--limit') ?? '') || undefined);
+        for (const h of hits) console.log(`${h.id}  ${h.kind}  ${h.name}  ${h.filePath ?? ''}:${h.line ?? ''}`);
+        console.error(`[codemap] ${hits.length} 个命中`);
+      } catch (e) {
+        console.error(`search 失败: ${e instanceof Error ? e.message : e}`);
+        return 2;
+      }
+      return 0;
+    }
+    case 'outline': {
+      const projectPath = resolveProject(args.positional[0]);
+      const node = flagValue(args.flags, '--node') ?? args.positional[1];
+      if (!node) {
+        console.error('用法: codemap outline <path> <节点id或符号名>');
+        return 1;
+      }
+      try {
+        console.log(JSON.stringify(outlineNode(projectPath, node), null, 2));
+      } catch (e) {
+        console.error(`outline 失败: ${e instanceof Error ? e.message : e}`);
         return 2;
       }
       return 0;

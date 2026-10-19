@@ -9,6 +9,9 @@ import { computeUnknowns } from '../core/unknowns.js';
 import { scanEdges } from '../core/boundaries.js';
 import { pierceBoundary } from '../core/pierce.js';
 import { tracePath } from '../core/trace.js';
+import { buildFeatures, describeFeature } from '../core/features.js';
+import { impactAnalysis } from '../core/impact.js';
+import { searchNodes, outlineNode } from '../core/search.js';
 import { resolveProject, ownDbExists } from '../util/paths.js';
 import { openOwnDb } from '../db/own.js';
 import { getProjection, pagePayload } from '../db/projections.js';
@@ -44,9 +47,8 @@ export async function startMcpServer(): Promise<void> {
     { name: 'codemap', version: VERSION },
     {
       instructions:
-        'CodeMap 代码地图（P1）：codemap_doctor 依赖体检、codemap_check_index 索引/镜像状态、' +
-        'codemap_map 出图（自适应折叠，mermaid/dot/json）、codemap_get 按 handle 取回完整投影。' +
-        '功能切片与边界工具（features/edges/unknowns…）随 P2+ 提供。' +
+        'CodeMap 代码地图（P5 全量）：doctor / check_index / map（出图）/ unknowns（盲区）/ edges（边界）/ ' +
+        'pierce（rea 穿透）/ trace（跨缝调用链）/ features（功能切片）/ describe_feature / impact（影响面）/ search / outline / get（投影取回）。' +
         'CodeMap 绝不静默安装、绝不代跑小时级索引、绝不写上游库。',
     },
   );
@@ -153,6 +155,75 @@ export async function startMcpServer(): Promise<void> {
       },
     },
     ({ path, from, to, undirected }) => wrap(async () => tracePath(resolveProject(path), from, to, { undirected })),
+  );
+
+  server.registerTool(
+    'codemap_features',
+    {
+      title: 'CodeMap Features',
+      description:
+        '功能切片：L4 入口（路由/IPC）→ 可达子图 → 功能卡（入口/成员/分层/coverage/盲区限制）。巨型入口降级 seed，fan-in≥3 判 shared',
+      inputSchema: {
+        path: z.string().optional().describe('工程路径，缺省为当前工作目录'),
+        maxDepth: z.number().int().min(1).max(10).optional().describe('可达深度，默认 5'),
+        maxFeatureNodes: z.number().int().min(10).max(2000).optional().describe('单功能节点上限，默认 500'),
+      },
+    },
+    ({ path, ...opts }) => wrap(async () => buildFeatures(resolveProject(path), opts)),
+  );
+
+  server.registerTool(
+    'codemap_describe_feature',
+    {
+      title: 'CodeMap Describe Feature',
+      description: '单个功能切片的完整卡：入口证据、成员明细（符号/文件/行）、coverage 与盲区',
+      inputSchema: {
+        path: z.string().optional().describe('工程路径，缺省为当前工作目录'),
+        feature: z.string().describe('功能名或 feature:<id>（先 codemap_features 列出）'),
+      },
+    },
+    ({ path, feature }) => wrap(async () => describeFeature(resolveProject(path), feature)),
+  );
+
+  server.registerTool(
+    'codemap_impact',
+    {
+      title: 'CodeMap Impact',
+      description: '影响面：从目标符号反向可达（谁会受影响）+ L4 放大（受影响路由/IPC 入口）',
+      inputSchema: {
+        path: z.string().optional().describe('工程路径，缺省为当前工作目录'),
+        symbol: z.string().describe('目标符号名或节点 id'),
+        depth: z.number().int().min(1).max(20).optional().describe('反向传播深度，默认 10'),
+      },
+    },
+    ({ path, symbol, depth }) => wrap(async () => impactAnalysis(resolveProject(path), symbol, { depth })),
+  );
+
+  server.registerTool(
+    'codemap_search',
+    {
+      title: 'CodeMap Search',
+      description: '镜像符号名检索（LIKE，top-N），用于定位节点 id 供 trace/impact/outline 使用',
+      inputSchema: {
+        path: z.string().optional().describe('工程路径，缺省为当前工作目录'),
+        q: z.string().describe('符号名关键词'),
+        limit: z.number().int().min(1).max(100).optional().describe('返回上限，默认 20'),
+      },
+    },
+    ({ path, q, limit }) => wrap(async () => searchNodes(resolveProject(path), q, limit)),
+  );
+
+  server.registerTool(
+    'codemap_outline',
+    {
+      title: 'CodeMap Outline',
+      description: '节点大纲：符号本体 + contains 层级（父容器/子成员）',
+      inputSchema: {
+        path: z.string().optional().describe('工程路径，缺省为当前工作目录'),
+        node: z.string().describe('节点 id 或唯一符号名'),
+      },
+    },
+    ({ path, node }) => wrap(async () => outlineNode(resolveProject(path), node)),
   );
 
   server.registerTool(

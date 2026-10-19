@@ -180,6 +180,8 @@ export function createFixtureProject(opts: FixtureOpts = {}): string {
     db.prepare(
       'INSERT INTO nodes(id, kind, name, qualified_name, file_path, language, start_line, end_line, updated_at) VALUES (?,?,?,?,?,?,?,?,?)',
     ).run('n:getUsers', 'function', 'getUsers', 'getUsers', 'src/server.ts', 'typescript', 1, 2, now);
+    // getUsers → svc 调用边：切片可达集有内容
+    db.prepare('INSERT INTO edges(source, target, kind, line, col) VALUES (?,?,?,?,?)').run('n:getUsers', 'n:svc', 'calls', 1, 1);
     db.prepare(
       'INSERT INTO files(path, content_hash, language, size, modified_at, indexed_at) VALUES (?,?,?,?,?,?)',
     ).run('src/server.ts', 'hashsrv', 'typescript', 200, now, now);
