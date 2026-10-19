@@ -2,7 +2,7 @@
 
 > 看清一个工程的结构 —— 每个功能的脉络，画成图。
 
-**状态：P0 已实现**（doctor / check_index / 镜像 ETL / 四态 coverage；MCP server + CLI 二合一）。P1 `codemap map` 出图开发中。
+**状态：P0–P5 全部实现**（13 个 MCP 工具 + CLI 全量命令，58 个单测通过）。待真实大工程验收（10 万节点 ETL < 60s）。
 
 ## 这是什么
 
@@ -70,23 +70,31 @@ unresolved_refs   595,593     ← 未解析引用比已解析的边还多
 
 ## 现状与下一步
 
-P0 已落地（TypeScript + `node:sqlite`，零原生编译依赖）：
+P0–P5 已全部落地（TypeScript + `node:sqlite`，零原生编译依赖）：
 
 ```bash
 npm install
-npm run build && npm test        # 15 个单测（fixture 上游库 + ETL + coverage + projections）
+npm run build && npm test        # 58 个单测（fixture 上游库 + 各阶段覆盖）
 node dist/cli.js doctor .        # 依赖体检 + 覆盖评级
 node dist/cli.js mirror <path>   # 构建/重建镜像 .codemap/codemap.db
-node dist/cli.js mcp             # MCP stdio server（doctor / check_index / get 三个工具）
+node dist/cli.js map <path> --include-l4   # 出图（mermaid/dot/json）
+node dist/cli.js features <path> # 功能切片
+node dist/cli.js mcp             # MCP stdio server（13 个工具）
 ```
 
-已实现：依赖四步探测（显式路径 → PATH → `npm prefix -g` shim → `npm ls -g`，禁 npx）、
-`codegraph status --json` 版本白名单校验、镜像 ETL（L0–L2 全量进 `.codemap/codemap.db`，
-daemon 死亡时 copy-aside 兜底）、四态 coverage 公式、handle/投影落库。
+| 阶段 | 能力 |
+| --- | --- |
+| P0 | 依赖四步探测（禁 npx）· status 白名单校验 · 镜像 ETL（copy-aside 兜底）· 四态 coverage · handle/投影 |
+| P1 | `codemap_map`：自适应折叠（symbol→file→dir 阶梯）· focus+N 跳 · mermaid/dot/codemap-graph json |
+| P2 | `codemap_unknowns` 盲区聚合 · `codemap_edges` 静态边界扫描（native/wasm/asar + HTTP 出口 + env + DB） |
+| P3 | `codemap_pierce` rea 穿透（未装则诚实 blocked + 指引，内容哈希缓存）· `codemap_trace` 跨缝调用链 |
+| P4 | L4 适配器：express 路由 / electron IPC+bridge / prisma 表（行级正则 + file:line 缝合，confidence 标注） |
+| P5 | `codemap_features` 功能切片（v2 §6.1 全规则）· describe_feature · impact（L4 放大）· search / outline |
 
-下一个里程碑：
+下一步：
 
-- **P1** `codemap map` 出图 —— 这一步结束即有可交付价值
+- 在真实大工程（10 万节点量级）上验收 ETL 性能与切片质量
+- 更多 L4 适配器（vue/react 页面、grpc）与 rea 实机穿透验证
 
 ## 设计原则
 
