@@ -5,6 +5,8 @@ import { VERSION } from '../version.js';
 import { runDoctor } from '../core/doctor.js';
 import { checkIndex } from '../core/check-index.js';
 import { buildMap } from '../core/map.js';
+import { computeUnknowns } from '../core/unknowns.js';
+import { scanEdges } from '../core/boundaries.js';
 import { resolveProject, ownDbExists } from '../util/paths.js';
 import { openOwnDb } from '../db/own.js';
 import { getProjection, pagePayload } from '../db/projections.js';
@@ -87,6 +89,39 @@ export async function startMcpServer(): Promise<void> {
       },
     },
     ({ path, ...params }) => wrap(async () => buildMap(resolveProject(path), params)),
+  );
+
+  server.registerTool(
+    'codemap_unknowns',
+    {
+      title: 'CodeMap Unknowns',
+      description:
+        '盲区清单：聚合 codegraph 自己没解析的引用（unresolved_refs）——按种类/目录/文件分布 + most-wanted 符号 + 范围 coverage。不暴露盲区就会默认图是完整的',
+      inputSchema: {
+        path: z.string().optional().describe('工程路径，缺省为当前工作目录'),
+        scope: z.string().optional().describe('project | module:<路径>'),
+      },
+    },
+    ({ path, scope }) =>
+      wrap(async () => {
+        const projectPath = resolveProject(path);
+        if (scope && scope !== 'project') {
+          if (!scope.startsWith('module:')) throw new Error(`scope 仅支持 project | module:<路径>，收到: ${scope}`);
+          return computeUnknowns(projectPath, scope.slice('module:'.length));
+        }
+        return computeUnknowns(projectPath);
+      }),
+  );
+
+  server.registerTool(
+    'codemap_edges',
+    {
+      title: 'CodeMap Edges',
+      description:
+        '外部边界清单：native 插件(.node/.dll/.so/.dylib)/wasm/asar/预编译包 + HTTP 出口 + 环境变量 + DB 指示器，静态扫描只读；二进制边界标注 rea 可否穿透（穿透本身用 codemap_pierce）',
+      inputSchema: { path: z.string().optional().describe('工程路径，缺省为当前工作目录') },
+    },
+    ({ path }) => wrap(async () => scanEdges(resolveProject(path))),
   );
 
   server.registerTool(

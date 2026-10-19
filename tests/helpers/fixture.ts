@@ -143,6 +143,19 @@ export function createFixtureProject(opts: FixtureOpts = {}): string {
       'INSERT INTO nodes(id, kind, name, qualified_name, file_path, language, start_line, end_line, updated_at) VALUES (?,?,?,?,?,?,?,?,?)',
     ).run('n:nm', 'function', 'nmfn', 'nmfn', 'node_modules/pkg/index.ts', 'javascript', 1, 5, now);
     db.prepare('INSERT INTO edges(source, target, kind, line, col) VALUES (?,?,?,?,?)').run('n:main', 'n:nm', 'calls', 2, 1);
+
+    // 磁盘文件：边界扫描 / HTTP egress / env 证据
+    fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'src', 'a.ts'),
+      "const k = process.env.API_KEY;\nawait fetch(url);\nimport { exec } from './native/addon.node';\n");
+    fs.writeFileSync(path.join(dir, 'src', 'b.ts'), "export const x = import.meta.env.VITE_FLAG;\n");
+    fs.mkdirSync(path.join(dir, 'native'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'native', 'addon.node'), '');
+    fs.mkdirSync(path.join(dir, 'resources'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'resources', 'app.asar'), '');
+    fs.mkdirSync(path.join(dir, 'lib'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'lib', 'libvendor.dll'), '');
+    fs.writeFileSync(path.join(dir, 'pkg.wasm'), '');
   }
 
   db.close();

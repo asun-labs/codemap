@@ -6,6 +6,8 @@ import { checkIndex, renderCheckText } from './core/check-index.js';
 import { buildMirror, MirrorError } from './db/mirror.js';
 import { buildMap, type MapFormat } from './core/map.js';
 import type { MapLevel } from './core/map-fold.js';
+import { computeUnknowns } from './core/unknowns.js';
+import { scanEdges } from './core/boundaries.js';
 import { codemapDir, removeOwnDbFiles, resolveProject } from './util/paths.js';
 
 const HELP = `codemap — 代码地图 v${VERSION}（P1）
@@ -16,11 +18,13 @@ const HELP = `codemap — 代码地图 v${VERSION}（P1）
   codemap map [path]               出图（--level system|module|symbol --focus X --depth N
                                    --format mermaid|dot|json --max-nodes N
                                    --scope project|module:<路径> -o <file>）
+  codemap unknowns [path]          盲区清单（unresolved_refs 聚合，--scope 可选）
+  codemap edges [path]             外部边界清单（native/wasm/asar + HTTP 出口 + env + DB）
   codemap clean [path]             清除镜像
   codemap mcp                      启动 MCP server（stdio）
   codemap help | --version
 
-P2+ 将提供: unknowns / edges / pierce / trace / features / impact
+P3+ 将提供: pierce / trace / features / describe_feature / impact
 环境变量 CODEMAP_CODEGRAPH_PATH 可显式指定 codegraph 可执行文件。
 铁律：不静默安装 · 不代跑小时级索引 · 不写上游库。`;
 
@@ -129,6 +133,37 @@ async function main(): Promise<number> {
         }
       } catch (e) {
         console.error(`map 失败: ${e instanceof Error ? e.message : e}`);
+        return 2;
+      }
+      return 0;
+    }
+    case 'unknowns': {
+      const projectPath = resolveProject(args.positional[0]);
+      try {
+        const scope = flagValue(args.flags, '--scope');
+        const report = computeUnknowns(projectPath, scope && scope !== 'project' ? scope.slice('module:'.length) : undefined);
+        console.log(JSON.stringify(report, null, 2));
+        console.error(
+          `[codemap] ${report.total} 个未解析引用 · coverage=${report.coverage.state}` +
+            (report.coverage.ratio != null ? ` (${(report.coverage.ratio * 100).toFixed(1)}%)` : ''),
+        );
+      } catch (e) {
+        console.error(`unknowns 失败: ${e instanceof Error ? e.message : e}`);
+        return 2;
+      }
+      return 0;
+    }
+    case 'edges': {
+      const projectPath = resolveProject(args.positional[0]);
+      try {
+        const report = scanEdges(projectPath);
+        console.log(JSON.stringify(report, null, 2));
+        console.error(
+          `[codemap] ${report.boundaries.length} 个边界 · ${report.httpEgress.length} 个 HTTP 出口文件 · ` +
+            `${report.envVars.length} 个环境变量 · ${report.databases.length} 个 DB 指示器`,
+        );
+      } catch (e) {
+        console.error(`edges 失败: ${e instanceof Error ? e.message : e}`);
         return 2;
       }
       return 0;
