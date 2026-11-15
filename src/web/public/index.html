@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <link rel="icon" href="data:,">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CodeMap</title>
+    <link rel="stylesheet" href="./app.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="dot"></span>
+        <strong id="project-name">CodeMap</strong>
+        <span class="meta" id="project-meta"></span>
+      </div>
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-tab="system" role="tab">系统图</button>
+        <button class="tab" data-tab="arch" role="tab">架构</button>
+      </nav>
+      <div class="tools">
+        <input id="search" type="search" placeholder="搜索文件…" autocomplete="off" />
+        <span class="badge" id="level-badge">L0 系统</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="pane active" id="pane-system">
+        <canvas id="canvas"></canvas>
+        <div class="hud" id="hud">
+          <div class="hud-row">
+            <label><input type="checkbox" id="opt-tests" /> 显示测试文件</label>
+            <label><input type="checkbox" id="opt-labels" checked /> 关键线标签</label>
+            <label><input type="checkbox" id="opt-expand" checked /> 自动展开到 L2</label>
+          </div>
+          <div class="hud-row">
+            <button id="btn-fit" title="适应窗口 (F)">适应</button>
+            <button id="btn-expand-all" title="全部展开到文件">展开全部</button>
+            <button id="btn-collapse-all" title="收起到第 1 层">收起全部</button>
+            <span class="zoom" id="zoom-label">100%</span>
+          </div>
+          <div class="legend">
+            <i class="lg sys"></i>系统 <i class="lg ext"></i>外部系统 <i class="lg mod"></i>模块 <i class="lg file"></i>文件
+            <i class="lg inferred"></i>推测关系
+          </div>
+        </div>
+        <aside class="detail hidden" id="detail">
+          <button class="close" id="detail-close" aria-label="关闭">×</button>
+          <div id="detail-body"></div>
+        </aside>
+        <div class="warn" id="warn"></div>
+      </section>
+
+      <section class="pane" id="pane-arch">
+        <div class="arch-wrap" id="arch"></div>
+      </section>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

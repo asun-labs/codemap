@@ -15,6 +15,8 @@ import { searchNodes, outlineNode } from '../core/search.js';
 import { resolveProject, ownDbExists } from '../util/paths.js';
 import { openOwnDb } from '../db/own.js';
 import { getProjection, pagePayload } from '../db/projections.js';
+import { analyze, loadGraph } from '../analyze/analyze.js';
+import { acquire, looksLikeGitUrl } from '../acquire/git.js';
 
 type ToolResult = {
   content: Array<{ type: 'text'; text: string }>;
@@ -47,7 +49,9 @@ export async function startMcpServer(): Promise<void> {
     { name: 'codemap', version: VERSION },
     {
       instructions:
-        'CodeMap 代码地图（P5 全量）：doctor / check_index / map（出图）/ unknowns（盲区）/ edges（边界）/ ' +
+        'CodeMap 代码地图。系统图 v3（重点）：codemap_system_analyze（路径或 git 地址→4 级系统关系图）→ ' +
+        'codemap_system_graph（顶层骨架：当前系统+外部系统+协议边）→ codemap_system_node（逐级下钻到文件）。' +
+        'P0–P5 深度工具：doctor / check_index / map（出图）/ unknowns（盲区）/ edges（边界）/ ' +
         'pierce（rea 穿透）/ trace（跨缝调用链）/ features（功能切片）/ describe_feature / impact（影响面）/ search / outline / get（投影取回）。' +
         'CodeMap 绝不静默安装、绝不代跑小时级索引、绝不写上游库。',
     },
@@ -256,6 +260,145 @@ export async function startMcpServer(): Promise<void> {
             /* 已关闭则忽略 */
           }
         }
+      }),
+  );
+
+  server.registerTool(
+    'codemap_system_analyze',
+    {
+      title: 'CodeMap System Analyze',
+      description:
+        '系统图 v3 分析：本地路径或远端 git 地址（自动克隆）→ codegraph 索引 → 4 级系统关系图' +
+        '（L0 系统/L1 子系统/L2 模块/L3 文件，测试文件过滤）+ 外部系统推测 + 架构视图，写入 <root>/.codemap/graph.json',
+      inputSchema: {
+        path: z.string().optional().describe('工程路径或 git 地址，缺省为当前工作目录'),
+        reindex: z.boolean().optional().describe('强制重建 codegraph 索引'),
+        includeTests: z.boolean().optional().describe('不过滤测试文件（默认过滤）'),
+        ref: z.string().optional().describe('git 分支/tag/commit'),
+        force: z.boolean().optional().describe('git 目标时强制重新克隆'),
+      },
+    },
+    ({ path, reindex, includeTests, ref, force }) =>
+      wrap(async () => {
+        const target = path ?? '.';
+        const acq = looksLikeGitUrl(target)
+          ? await acquire({ target, ref, force: force ?? false }, (l) => diag(l))
+          : {
+              kind: 'local' as const,
+              root: resolveProject(target),
+              source: target,
+              cloned: false,
+              notes: [] as string[],
+            };
+        const g = await analyze({
+          root: acq.root,
+          source: acq.source,
+          sourceKind: acq.kind,
+          reindex: reindex ?? false,
+          includeTests: includeTests ?? false,
+          log: (l) => diag(l),
+        });
+        return {
+          name: g.project.name,
+          root: g.project.root,
+          stats: g.project.stats,
+          nodes: g.nodes.length,
+          edges: g.edges.length,
+          externalSystems: g.nodes.filter((n) => n.external).map((n) => n.label),
+          warnings: g.warnings,
+          graphFile: `${acq.root}/.codemap/graph.json`,
+          hint: '用 codemap_system_graph 看顶层，codemap_system_node 逐级下钻',
+        };
+      }),
+  );
+
+  server.registerTool(
+    'codemap_system_graph',
+    {
+      title: 'CodeMap System Graph',
+      description:
+        '系统图 v3 顶层视图：项目信息、L0 系统骨架（当前系统 + 外部系统，含协议/方向/置信度）、' +
+        'L1/L2 顶层子结构与架构分层。先跑 codemap_system_analyze 生成 graph.json',
+      inputSchema: { path: z.string().optional().describe('工程路径，缺省为当前工作目录') },
+    },
+    ({ path }) =>
+      wrap(async () => {
+        const g = loadGraph(resolveProject(path));
+        if (!g) throw new Error('没有分析结果（.codemap/graph.json 缺失）—— 先运行 codemap_system_analyze');
+        const top = g.nodes.filter((n) => n.level === 0 || n.level === 1 || n.parent === null);
+        return {
+          project: g.project,
+          warnings: g.warnings,
+          systemsDraft: g.systems.draft,
+          skeleton: top.map((n) => ({
+            id: n.id,
+            level: n.level,
+            kind: n.kind,
+            label: n.label,
+            external: n.external,
+            childCount: n.childCount,
+            metrics: n.metrics,
+          })),
+          wires: g.edges.filter((e) => e.scope === 'system'),
+          architecture: {
+            strategy: g.architecture.strategy,
+            layers: g.architecture.layers.map((l) => ({ name: l.name, members: l.members.length })),
+          },
+        };
+      }),
+  );
+
+  server.registerTool(
+    'codemap_system_node',
+    {
+      title: 'CodeMap System Node',
+      description:
+        '系统图 v3 节点下钻：单个节点的指标、子节点（下一层，可继续下钻到文件）、关系边' +
+        '（类型/权重/协议/置信度/证据 file:line）。id 形如 sys:__current__、pkg:<dir>、mod/<路径>、file:<路径>',
+      inputSchema: {
+        path: z.string().optional().describe('工程路径，缺省为当前工作目录'),
+        id: z.string().describe('节点 id（codemap_system_graph 返回的 id）'),
+      },
+    },
+    ({ path, id }) =>
+      wrap(async () => {
+        const g = loadGraph(resolveProject(path));
+        if (!g) throw new Error('没有分析结果（.codemap/graph.json 缺失）—— 先运行 codemap_system_analyze');
+        const node = g.nodes.find((n) => n.id === id);
+        if (!node) {
+          const sample = g.nodes.filter((n) => n.level <= 1).map((n) => n.id).slice(0, 20);
+          throw new Error(`节点不存在: ${id}。顶层节点有: ${sample.join(', ')}`);
+        }
+        const children = g.nodes
+          .filter((n) => n.parent === id)
+          .map((n) => ({ id: n.id, kind: n.kind, label: n.label, level: n.level, childCount: n.childCount }));
+        const relations = g.edges
+          .filter((e) => e.source === id || e.target === id)
+          .sort((a, b) => b.weight - a.weight)
+          .slice(0, 50)
+          .map((e) => ({
+            dir: e.source === id ? 'out' : 'in',
+            other: e.source === id ? e.target : e.source,
+            kind: e.kind,
+            label: e.label,
+            protocol: e.protocol,
+            confidence: e.confidence,
+            evidence: e.evidence,
+          }));
+        return {
+          node: {
+            id: node.id,
+            level: node.level,
+            kind: node.kind,
+            label: node.label,
+            path: node.path,
+            external: node.external,
+            metrics: node.metrics,
+            notes: node.notes,
+          },
+          children,
+          relations,
+        };
       }),
   );
 

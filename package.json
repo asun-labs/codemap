@@ -1,7 +1,7 @@
 {
   "name": "codemap-agents",
   "version": "0.1.0",
-  "description": "CodeMap 代码地图 —— 看清一个工程的结构，画成图。MCP server + CLI（P0：doctor / check_index / 镜像 ETL / coverage / get）",
+  "description": "CodeMap 代码地图 —— 输入本地仓库或 git 地址，codegraph 分析为可无限下钻的 4 级系统关系图（CLI + 纯展示 Web + MCP server 双形态）。含 P0–P5 深度工具（doctor/map/unknowns/trace/features/impact 等 13 工具）",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -15,9 +15,9 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node -e \"const fs=require('fs');fs.cpSync('src/web/public','dist/web/public',{recursive:true});console.log('public -> dist/web/public')\"",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/mirror.test.ts tests/coverage.test.ts tests/projections.test.ts tests/map.test.ts tests/edges.test.ts tests/pierce-trace.test.ts tests/adapters.test.ts tests/features.test.ts",
+    "test": "tsx --test tests/mirror.test.ts tests/coverage.test.ts tests/projections.test.ts tests/map.test.ts tests/edges.test.ts tests/pierce-trace.test.ts tests/adapters.test.ts tests/features.test.ts tests/v3-graph.test.ts",
     "smoke": "node dist/cli.js doctor ."
   },
   "dependencies": {

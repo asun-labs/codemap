@@ -15,8 +15,21 @@ import { buildFeatures, describeFeature } from './core/features.js';
 import { impactAnalysis } from './core/impact.js';
 import { searchNodes, outlineNode } from './core/search.js';
 import { codemapDir, removeOwnDbFiles, resolveProject } from './util/paths.js';
+import { acquire, looksLikeGitUrl } from './acquire/git.js';
+import { analyze, loadGraph } from './analyze/analyze.js';
+import { startWeb } from './web/server.js';
 
-const HELP = `codemap — 代码地图 v${VERSION}（P5 全量）
+const HELP = `codemap — 代码地图 v${VERSION}
+
+【系统图 v3】
+  codemap analyze [路径|git地址]   获取代码 → 全仓分析 → 生成 graph.json → 起本地 Web（自动开浏览器）
+                                   [--port N] [--no-web] [--no-open] [--reindex] [--include-tests]
+                                   [--ref 分支] [--force 重新克隆]
+  codemap web [path]               对已分析的项目起 Web（两页签：系统图 / 架构）
+  codemap systems [path]           查看/管理 .codemap/systems.yaml（跨系统关系清单）
+                                   [--regenerate 删除建议稿并重新分析]
+
+【P0–P5 遗留命令】
 
   codemap doctor [path] [--json]   依赖体检 + 覆盖评级
   codemap check [path] [--json]    索引与镜像状态（只检查不代跑）
@@ -39,12 +52,11 @@ const HELP = `codemap — 代码地图 v${VERSION}（P5 全量）
   codemap search <path> <关键词>   镜像符号检索
   codemap outline <path> <节点>    符号大纲（contains 层级）
   codemap clean [path]             清除镜像
-  codemap mcp                      启动 MCP server（stdio，13 个工具）
+  codemap mcp                      启动 MCP server（stdio，16 个工具）
   codemap help | --version
 
 环境变量 CODEMAP_CODEGRAPH_PATH / CODEMAP_REA_PATH 可显式指定可执行文件。
 铁律：不静默安装 · 不代跑小时级索引 · 不写上游库。`;
-
 interface Args {
   positional: string[];
   flags: string[];
@@ -335,6 +347,45 @@ async function main(): Promise<number> {
       }
       return 0;
     }
+    case 'analyze': {
+      return runAnalyze(args.positional[0], args);
+    }
+    case 'web': {
+      const projectPath = resolveProject(args.positional[0] ?? '.');
+      if (!loadGraph(projectPath)) {
+        console.error(`没有分析结果（${projectPath}/.codemap/graph.json 缺失），先运行: codemap analyze ${projectPath}`);
+        return 1;
+      }
+      const log = (l: string) => console.error(`[codemap] ${l}`);
+      const port = Number(flagValue(args.flags, '--port') ?? '') || 4173;
+      await startWeb({ root: projectPath, port, open: !args.flags.includes('--no-open'), log });
+      console.error('[codemap] Ctrl+C 停止');
+      await new Promise<never>(() => {});
+      return 0;
+    }
+    case 'systems': {
+      const projectPath = resolveProject(args.positional[0] ?? '.');
+      const yamlPath = codemapDir(projectPath) + '/systems.yaml';
+      if (args.flags.includes('--regenerate')) {
+        if (fs.existsSync(yamlPath)) {
+          fs.rmSync(yamlPath);
+          console.error(`[codemap] 已删除 ${yamlPath}`);
+        }
+        console.error('[codemap] 重新分析以生成新的建议稿…');
+        return runAnalyze(projectPath, { ...args, flags: args.flags.filter((f) => f !== '--regenerate') });
+      }
+      if (!fs.existsSync(yamlPath)) {
+        console.log(`尚无 ${yamlPath}`);
+        console.log('运行 codemap analyze 会自动生成外部系统建议稿；也可手写，格式：');
+        console.log('  current: { name: 本系统名 }');
+        console.log('  systems: [ { id, name, kind: external } ]');
+        console.log('  edges:   [ { source, target, protocol, direction } ]');
+        return 0;
+      }
+      console.log(`# ${yamlPath}`);
+      console.log(fs.readFileSync(yamlPath, 'utf8'));
+      return 0;
+    }
     case 'mcp': {
       const { startMcpServer } = await import('./mcp/server.js');
       await startMcpServer();
@@ -351,10 +402,65 @@ async function main(): Promise<number> {
     case 'version':
       console.log(`codemap ${VERSION}`);
       return 0;
-    default:
+    default: {
+      // 便利入口：输入像 git 地址或存在的目录时直接当作 analyze
+      if (typeof cmd === 'string' && (looksLikeGitUrl(cmd) || isDir(cmd))) {
+        return runAnalyze(cmd, args);
+      }
       console.error(`未知命令: ${cmd}\n\n${HELP}`);
       return 1;
+    }
   }
+}
+
+function isDir(p: string): boolean {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** analyze 主流程：acquire → analyze → 起 Web（默认自动开浏览器） */
+async function runAnalyze(target: string | undefined, args: Args): Promise<number> {
+  const t = target ?? '.';
+  const log = (l: string) => console.error(`[codemap] ${l}`);
+  log(`获取代码: ${t}`);
+  const acq = await acquire(
+    {
+      target: t,
+      force: args.flags.includes('--force'),
+      ref: flagValue(args.flags, '--ref'),
+    },
+    log,
+  );
+  for (const n of acq.notes) log(n);
+  if (acq.git?.commit) log(`HEAD ${acq.git.commit.slice(0, 9)}${acq.git.branch ? ` @ ${acq.git.branch}` : ''}`);
+
+  const g = await analyze({
+    root: acq.root,
+    source: acq.source,
+    sourceKind: acq.kind,
+    reindex: args.flags.includes('--reindex'),
+    includeTests: args.flags.includes('--include-tests'),
+    log,
+  });
+
+  const ext = g.nodes.filter((n) => n.external).length;
+  console.log(`分析完成: ${g.project.name}`);
+  console.log(
+    `  文件 ${g.project.stats.files} · 符号 ${g.project.stats.symbols} · 边 ${g.project.stats.edges}` +
+      ` · 过滤测试 ${g.project.stats.testsFiltered}`,
+  );
+  console.log(`  图: ${g.nodes.length} 节点 / ${g.edges.length} 边 · 外部系统 ${ext} 个`);
+  for (const w of g.warnings) console.log(`  ! ${w}`);
+
+  if (args.flags.includes('--no-web')) return 0;
+  const port = Number(flagValue(args.flags, '--port') ?? '') || 4173;
+  const web = await startWeb({ root: acq.root, port, open: !args.flags.includes('--no-open'), log });
+  console.error(`[codemap] Web 服务运行中: ${web.url} （Ctrl+C 停止）`);
+  await new Promise<never>(() => {});
+  return 0;
 }
 
 main()
